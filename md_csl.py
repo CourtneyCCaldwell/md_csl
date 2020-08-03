@@ -66,15 +66,10 @@ exp_av=np.zeros(n_props)
 std2=np.zeros(n_props)
 
 #**************************************************************
-#user interface 
-#makes code easier to use, run plotting and statistic from there
-#def interface():
-#**************************************************************
-
 #setup initial conditions
 def initialize():
   #Global Variabless
-  global x,y,z,vx,vy,vz,vx0,vy0,vz0,pq,pq0
+  global state
 
   #This part computes nced and the number of vacancies in the lattice
   count=0
@@ -95,19 +90,8 @@ def initialize():
 
   #microstate:
   size1=N+N_hole
-  x=np.zeros(size1)
-  y=np.zeros(size1)
-  z=np.zeros(size1)
-  vx=np.zeros(size1)
-  vy=np.zeros(size1)
-  vz=np.zeros(size1)
-  #v(t0) array for dynamical measurements
-  vx0=np.zeros(size1)
-  vy0=np.zeros(size1)
-  vz0=np.zeros(size1)
-  #pq(t) and pq0(t) arrays for dynamical measurements
-  pq=np.empty(nq,dtype=np.complex_)
-  pq0=np.empty(nq,dtype=np.complex_)
+  state = np.zeros(size1, 2, 3)
+  
 
 
   #initial positions
@@ -136,12 +120,12 @@ def initialize():
   #translate copies of positions in array to fill up entire PBC cell
   #with FCC lattice points
   k=0
-  for ix in range(nced):
-    relx=ix*dimc
-    for iy in range(nced):
-      rely=iy*dimc
-      for iz in range(nced):
-        relz=iz*dimc
+  for x_iter in range(nced):
+    rel_x = x_iter*dimc
+    for y_iter in range(nced):
+      rel_y = y_iter*dimc
+      for z_iter in range(nced):
+        rel_z = z_iter*dimc
         for j in range(4):
           #perform the translation and place a particle there if
           #we have still not used up all the particles
@@ -149,13 +133,13 @@ def initialize():
           #with full lattice to subtract off from
           #for no vacancies, N_hole==0
           if k<(size1):
-            x[k] = relx + qfcc[j][0]*dimc
-            y[k] = rely + qfcc[j][1]*dimc
-            z[k] = relz + qfcc[j][2]*dimc
+            state[k][0][0] = rel_x + qfcc[j][0]*dimc
+            state[k][0][1] = rely + qfcc[j][1]*dimc
+            state[k][0][2] = relz + qfcc[j][2]*dimc
             #make PBC centered at origin
-            x[k]+= - L*int(round(x[k]/L))
-            y[k]+= - L*int(round(y[k]/L))
-            z[k]+= - L*int(round(z[k]/L))
+            state[k][0][0]+= - L*int(round(x[k]/L))
+            state[k][0][1]+= - L*int(round(y[k]/L))
+            state[k][0][2]+= - L*int(round(z[k]/L))
           k+=1
 
   #This part handles case when N_hole != 0.
@@ -163,9 +147,7 @@ def initialize():
   #where N+N_hole is the closest "magic number" larger than N
   if hole_flag == 2:
     rnd_index=random.sample(range(size1), N_hole)
-    x = np.delete(x, rnd_index)
-    y = np.delete(y, rnd_index)
-    z = np.delete(z, rnd_index)
+    state = np.delete(state, rnd_index)
     
   #initial velocities
   #calculate total potential energy from initial positions using LJV
@@ -227,7 +209,6 @@ def initialize():
   print("Temperature: T = ", T)
 
 #**************************************************************
-  
 #potential energy for a pair of particles function
 #LJV(particles x positions, particles y positions, particles z positions, 1st particle index, 2nd particle index)
 def LJV(q1, q2, q3, idi, idj):
@@ -247,7 +228,6 @@ def LJV(q1, q2, q3, idi, idj):
   return v
 
 #**************************************************************
-
 #velocity Verlet move function
 def move():
   f0x=np.zeros(N)
@@ -284,7 +264,6 @@ def move():
     z[i]+= - L*int(round(z[i]/L))
 
 #**************************************************************
-
 #force function
 def force(idi, idim):
   fdim=0.0
@@ -305,7 +284,6 @@ def force(idi, idim):
   return fdim
       
 #**************************************************************
-
 #measures observables
 def measure():
   v = 0.0
@@ -359,151 +337,6 @@ def measure():
   
   pos.close()
   vel.close()
-  
-#**************************************************************
-#dynamical measurements
-#Within each step we keep the system moving over a time t_delay and 
-#compute a dynamical variable, the VACF. Because the static observables
-#are computed with ensemble averages (actually time averages that can 
-#be taken as ensemble averages because the system is ergodic) we do 
-#not need to do this and the procedure is less complicated. I think.
-def measure_dyn(m):
-  #velocity autocorrelation
-  im=i_cv+m
-  if m==0:
-    for i in range(N):
-      vx0[i]=vx[i]
-      vy0[i]=vy[i]
-      vz0[i]=vz[i]
-
-  walker[im]=0.0
-  for k in range(N):
-    walker[im]+=vx[k]*vx0[k]+vy[k]*vy0[k]+vz[k]*vz0[k]
-  walker[im]=walker[im]/N
-
-  #dynamical density correlation
-  if m==0:
-    for i in range(nq):
-      pq0[i]=complex(0,0)
-      for j in range(N):
-        #negative in exp is gone because it cancels with negative q in definitio of pq(t)
-        pq0[i]+=cmath.exp(complex(0,qvec[i]*x[j]))
-
-
-  for i in range(nq):
-    pq[i]=complex(0,0)
-    for j in range(N):
-      pq[i]+=cmath.exp(complex(0,-qvec[i]*x[j]))
-
-
-  print("Debug pq0 pq ",pq0[0], pq[0], qvec[0])
-
-  for k in range(nq):
-    im=i_pq+k+m*nq
-    walker[im]=0.0
-
-  for k in range(nq):
-    im=i_pq+k+m*nq
-    corr=pq[k]*pq0[k]
-    walker[im]+=corr.real
-    walker[im]=walker[im]/N
-    if(k==0):
-      print("Debug m ",m)
-      print("Debug im ",im)
-      print("Debug corr ",corr.real/N)
-      print("Debug walker ",walker[im])
-     
-
-  #dynamical structure factor
-  #make later
-
-
-
-#**************************************************************
-
-#computes averages
-#need to change to averages and standard devs from different blocks
-#recall the blk_norm is the same as nstep
-#I do not know if the stdev is the same for every value of blk_av
-#printed to file or whether it would be different
-#I think it should be the same because each block is an experiments
-#and the standard deviation comes from many experiments
-def average(iwhat):
-  wd=12
-  global blk_norm,blk_av,exp_av,walker
-  #Reset block averages
-  if iwhat == 1:
-    blk_av = np.zeros(n_props)
-    exp_av = np.zeros(n_props)
-    blk_norm = 0.0
-
-
-  #Update block averages
-  elif iwhat == 2:
-    for i in range(n_props):
-      blk_av[i] = blk_av[i] + walker[i]
-    blk_norm = blk_norm + 1.0
-
-  #Print results for current block
-  elif iwhat == 3:
-    print("Block number: ", iblk)
-
-    Epot=open('epotential.dat','a') 
-    Pres=open("pressure.dat",'a')
-    Ekin=open("ekinetic.dat",'a')
-    Temp=open("temperature.dat",'a')
-    Etot=open("etotal.dat",'a')
-    Gofr=open("gofr.dat",'a')
-    Vacf=open("vacf.dat",'a')
-    Ddcf=open("ddcf.dat",'a')
-
-
-    #Average potential energy per particle
-    Epot.write("{:f}\t\t\t{:f}\n".format(blk_av[iv]/blk_norm/N,blk_norm))
-    #Average pressure per particle
-    Pres.write("{:f}\t\t\t{:f}\n".format(rho*(2.0/3.0)*blk_av[it]/blk_norm/N+((blk_av[iw]/blk_norm)/vol),blk_norm))
-    #Average kinetic energy per particle
-    Ekin.write("{:f}\t\t\t{:f}\n".format(blk_av[it]/blk_norm/N,blk_norm))
-    #Average temperature per particle
-    Temp.write("{:f}\t\t\t{:f}\n".format((2.0/3.0)*blk_av[it]/blk_norm/N,blk_norm))
-    #Average total energy per particle
-    Etot.write("{:f}\t\t\t{:f}\n".format(blk_av[ie]/blk_norm/N,blk_norm))
-
-
-    
-    #g(r)
-    for k in range(igofr,igofr+nbins):
-      sd=4.0*np.pi/3.0
-      kk = k - igofr
-      r = kk * bin_size
-      gdir = blk_av[k]/blk_norm
-      gdir *= 1.0/(sd * ((r + bin_size)**3 - (r**3)) * rho * N)
-      Gofr.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(gdir,blk_norm,r))
-    
-    for l in range(i_cv,i_cv+t_delay):
-      t=(l-i_cv)*dt
-      Vacf.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(blk_av[l]/blk_norm,blk_norm,t))
-
-    for j in range(i_pq,i_pq+t_delay*nq):
-      t=int((j-i_pq)/nq)*dt
-      q=(j-i_pq)%nq
-      Ddcf.write("{:f}\t\t\t{:f}\t\t\t{:f}\t\t\t{:f}\n".format(blk_av[j]/blk_norm,blk_norm,t,qvec[q]))
-    
-    
-    Epot.close()
-    Pres.close()
-    Ekin.close()
-    Temp.close()
-    Etot.close()
-    Gofr.close()
-    Vacf.close()
-    Ddcf.close()
-
-    print("----------------------------")
-
-#**************************************************************
-#gets final configuration of system
-#def final_config():
 
 #**************************************************************
 #main
