@@ -5,13 +5,14 @@ from mpl_toolkits.mplot3d import Axes3D
 import random 
 import os
 import subprocess as sub
+import time
 sub.call("rm -rf *.dat",shell=True)
 
 #simulation parameters organized my use or type:
 #**************************************************************
 #The user will create different physical scenarios with these.
 #macostate:
-N=21 #number of particles
+N=1372 #number of particles
 rho=0.8 #density
 E=-3.00 #total energy per particle
 #time parameters:
@@ -90,7 +91,7 @@ def initialize():
 
   #microstate:
   size1=N+N_hole
-  state = np.zeros(size1, 2, 3)
+  state = np.zeros((size1, 2, 3))
   
 
 
@@ -134,12 +135,12 @@ def initialize():
           #for no vacancies, N_hole==0
           if k<(size1):
             state[k][0][0] = rel_x + qfcc[j][0]*dimc
-            state[k][0][1] = rely + qfcc[j][1]*dimc
-            state[k][0][2] = relz + qfcc[j][2]*dimc
+            state[k][0][1] = rel_y + qfcc[j][1]*dimc
+            state[k][0][2] = rel_z + qfcc[j][2]*dimc
             #make PBC centered at origin
-            state[k][0][0]+= - L*int(round(x[k]/L))
-            state[k][0][1]+= - L*int(round(y[k]/L))
-            state[k][0][2]+= - L*int(round(z[k]/L))
+            state[k][0][0]+= - L*int(np.round(state[k][0][0]/L))
+            state[k][0][1]+= - L*int(np.round(state[k][0][0]/L))
+            state[k][0][2]+= - L*int(np.round(state[k][0][0]/L))
           k+=1
 
   #This part handles case when N_hole != 0.
@@ -147,16 +148,19 @@ def initialize():
   #where N+N_hole is the closest "magic number" larger than N
   if hole_flag == 2:
     rnd_index=random.sample(range(size1), N_hole)
-    state = np.delete(state, rnd_index)
-    
+    state = np.delete(state, rnd_index, axis = 0)
   #initial velocities
   #calculate total potential energy from initial positions using LJV
-  vtot=0.0
-  for i in range(N-1):
-    for j in range(i+1,N):
-      vpair=LJV(x,y,z,i,j)
-      vtot=vtot+vpair
-
+  start = time.time()
+  vtot= np.zeros(1)
+  for particle_i in range(N-1):
+    for particle_j in range(particle_i+1,N):
+      vtot = np.add(vtot,LJV(state,particle_i,particle_j))
+  print("Outer loop ran in: " + str(time.time() - start))
+  
+  start = time.time()
+  vtot = LJV2(state)
+  print("Inner loop ran in: " + str(time.time() - start))
   #this is a warning that something is unphysical because
   #by definintion ekin>0.0, always
   ekin=(E*N)-vtot
@@ -170,37 +174,33 @@ def initialize():
   vnet=np.zeros(3)
   for i in range(N):
     #uniform random velocities (adjusted later)
-    vx[i]=np.random.uniform()-0.5
-    vy[i]=np.random.uniform()-0.5
-    vz[i]=np.random.uniform()-0.5
+    state[i][1]=np.random.uniform(low=-0.5, high=0.5,size= 3)
+
     #net velocity components
-    vnet[0]=vnet[0]+vx[i]
-    vnet[1]=vnet[1]+vy[i]
-    vnet[2]=vnet[2]+vz[i]
+    vnet = np.add(vnet, state[i][1])
+    #vnet[0]=vnet[0]+vx[i]
+
   
   #components of net velocity per particle
-  vnet[0]=vnet[0]/N
-  vnet[1]=vnet[1]/N
-  vnet[2]=vnet[2]/N
+  vnet = np.divide(vnet,N)
+  #vnet[0]=vnet[0]/N
 
   #subtract off net velocity of cloud from velocity of each particle
   for i in range(N):
-    vx[i]=vx[i]-vnet[0]
-    vy[i]=vy[i]-vnet[1]
-    vz[i]=vz[i]-vnet[2]
+    state[i][1] = np.subtract(state[i][1], vnet)
+    #vx[i]=vx[i]-vnet[0]
 
   #calculate velocities using the thermo formula
-  sumv2=0.0
+  sumv2= np.zeros(3)
   for i in range(N):
-    sumv2+= vx[i]*vx[i]+vy[i]*vy[i]+vz[i]*vz[i]
-  sumv2 /= N
+    sumv2 = np.add(sumv2, np.sum(np.square(state[i][1])))
+  sumv2 = np.divide(np.sum(sumv2), N)
   
   fs = (3*T/sumv2)**0.5
   #rescale velocities so that they satisfy the thermo formula
   for i in range(N):
-    vx[i] *= fs
-    vy[i] *= fs
-    vz[i] *= fs
+    state[i][1] = np.multiply(state[i][1], fs)
+    #vx[i] *= fs
 
   print("(N,V,E) = ", N," ", vol," ", E)
   print("PBC cell side length: L = ", L)
@@ -211,15 +211,14 @@ def initialize():
 #**************************************************************
 #potential energy for a pair of particles function
 #LJV(particles x positions, particles y positions, particles z positions, 1st particle index, 2nd particle index)
-def LJV(q1, q2, q3, idi, idj):
-  dx0=q1[idi]-q1[idj]
-  dx0=dx0 - L*int(round(dx0/L))
-  dy0=q2[idi]-q2[idj]
-  dy0=dy0 - L*int(round(dy0/L))
-  dz0=q3[idi]-q3[idj]
-  dz0=dz0 - L*int(round(dz0/L))
-  dr=dx0**2+dy0**2+dz0**2
-  dr=dr**0.5
+def LJV(state, particle_i,particle_j):
+  temp_pos = state[particle_i][0] - state[particle_j][0]
+  # dx0=q1[idi]-q1[idj]
+  temp_pos = np.subtract(temp_pos, np.multiply(np.round(np.divide(temp_pos, L)), L))
+  #dx0=dx0 - L*int(round(dx0/L))
+  dr = np.sqrt(np.sum(np.square(temp_pos)))
+  #dr=dx0**2+dy0**2+dz0**2
+  #dr=dr**0.5
   v=4.0*epsilon*((sigma/dr)**12-(sigma/dr)**6)
   if dr>=rcut:
     v=0.0
@@ -227,6 +226,24 @@ def LJV(q1, q2, q3, idi, idj):
     v=v-vcut
   return v
 
+def LJV2(state):
+  vtot= np.zeros(1)
+  for particle_i in range(N-1):
+    for particle_j in range(particle_i+1,N):
+        temp_pos = state[particle_i][0] - state[particle_j][0]
+        # dx0=q1[idi]-q1[idj]
+        temp_pos = np.subtract(temp_pos, np.multiply(np.round(np.divide(temp_pos, L)), L))
+        #dx0=dx0 - L*int(round(dx0/L))
+        dr = np.sqrt(np.sum(np.square(temp_pos)))
+        #dr=dx0**2+dy0**2+dz0**2
+        #dr=dr**0.5
+        v=4.0*epsilon*((sigma/dr)**12-(sigma/dr)**6)
+        if dr>=rcut:
+          v=0.0
+        if dr<rcut:
+          v=v-vcut
+        vtot = np.add(vtot, v)
+  return vtot
 #**************************************************************
 #velocity Verlet move function
 def move():
