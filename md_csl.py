@@ -6,13 +6,14 @@ import random
 import os
 import subprocess as sub
 import time
+from numba import jit, njit, cuda
 sub.call("rm -rf *.dat",shell=True)
 
 #simulation parameters organized my use or type:
 #**************************************************************
 #The user will create different physical scenarios with these.
 #macostate:
-N=1372 #number of particles
+N=20000 #number of particles
 rho=0.8 #density
 E=-3.00 #total energy per particle
 #time parameters:
@@ -151,15 +152,15 @@ def initialize():
     state = np.delete(state, rnd_index, axis = 0)
   #initial velocities
   #calculate total potential energy from initial positions using LJV
-  start = time.time()
+  # start = time.time()
   vtot= np.zeros(1)
-  for particle_i in range(N-1):
-    for particle_j in range(particle_i+1,N):
-      vtot = np.add(vtot,LJV(state,particle_i,particle_j))
-  print("Outer loop ran in: " + str(time.time() - start))
+  # for particle_i in range(N-1):
+  #   for particle_j in range(particle_i+1,N):
+  #     vtot = np.add(vtot,LJV(state,particle_i,particle_j))
+  # print("Outer loop ran in: " + str(time.time() - start))
   
   start = time.time()
-  vtot = LJV2(state)
+  vtot += LJV2(state)
   print("Inner loop ran in: " + str(time.time() - start))
   #this is a warning that something is unphysical because
   #by definintion ekin>0.0, always
@@ -225,14 +226,16 @@ def LJV(state, particle_i,particle_j):
   if dr<rcut:
     v=v-vcut
   return v
-
+@jit(nopython=True)
 def LJV2(state):
   vtot= np.zeros(1)
   for particle_i in range(N-1):
     for particle_j in range(particle_i+1,N):
         temp_pos = state[particle_i][0] - state[particle_j][0]
         # dx0=q1[idi]-q1[idj]
-        temp_pos = np.subtract(temp_pos, np.multiply(np.round(np.divide(temp_pos, L)), L))
+        x = np.divide(temp_pos, L)
+        x = np.round(x[0])
+        temp_pos = np.subtract(temp_pos, np.multiply(x, L))
         #dx0=dx0 - L*int(round(dx0/L))
         dr = np.sqrt(np.sum(np.square(temp_pos)))
         #dr=dx0**2+dy0**2+dz0**2
