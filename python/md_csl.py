@@ -24,19 +24,26 @@ sub.call("rm -rf *.dat",shell=True)
 #These variables can be changed by the user to do different simulates for different possible realizations of the canonical ensemble. 
 #***************************************************************************************************************************************
 
+#load from simulation parameters file sim_params.in
+p1, p2, p3, p4, p5, p6, p7, p8, p9 = np.loadtxt("sim_params.in", unpack=True, skiprows=22)
+
 #ENSEMBLE PARAMETERS: The user can simulate different macrostates by choosing different values for the parameters of the
 #microcanonical ensemble (N,V,E).
 
-nPart = 108 #The number of particles, N.
-rho = 0.8 #The density. This is related to the volume V.
-eTot = -5.73 #The total energy per particle. This is related to the total energy E.
+nPart = int(p1) #The number of particles, N.
+rho = p2 #The density. This is related to the volume V.
+eTot = p3 #The total energy per particle. This is related to the total energy E.
+
+#nPart = 108 #The number of particles, N.
+#rho = 0.8 #The density. This is related to the volume V.
+#eTot = -5.73 #The total energy per particle. This is related to the total energy E.
 
 #TIME PARAMETERS: These control the quality of the simulation evolution and the quality of the statistics.
 
-nBlock = 10 #Number of blocks. This controls number of measurements that are used to calculate the statistics for the oberservables.
-nStep =  10 #Number of time steps in a block. The simulated system changes its microstate from one time step to another.
-dt = 0.001  #Time step length. This is the approximation to the time differential. It is small but necessarily finite, 
-            #because the computer does "know" calculus, and can only do basic arthimetic.
+nBlock = int(p4) #Number of blocks. This controls number of measurements that are used to calculate the statistics for the oberservables.
+nStep =  int(p5) #Number of time steps in a block. The simulated system changes its microstate from one time step to another.
+dt = p6  #Time step length. This is the approximation to the time differential. It is small but necessarily finite, because the computer 
+         #does "know" calculus, and can only do basic arthimetic.
 
 #***************************************************************************************************************************************
 
@@ -77,7 +84,7 @@ nProp = nOb #We keep updating the value of this variable as we add new function 
 
 
 igofr = nProp #Index in walker where the radial distribution function g(r) starts
-nBin = 10 #Number of values g(r) is measured for
+nBin = int(p7) #Number of values g(r) is measured for
 nProp = nProp + nBin #We keep updating the value of this variable as we add new function observables
 sizeBin = (lBox/2.0)/nBin #The width in r of the bins used to compute g(r)
 
@@ -85,14 +92,13 @@ sizeBin = (lBox/2.0)/nBin #The width in r of the bins used to compute g(r)
 
 #for C_vv(t_d)
 icvel = nProp #Index in walker where the velocity autocorrelation function C_vv(t_d) starts
-nTdelay = 10 #Number of values C_vv(t_d) is measured for
+nTdelay = int(p8) #Number of values C_vv(t_d) is measured for
 nProp = nProp + nTdelay #We keep updating the value of this variable as we add new function observables
 
 #for C_rhorho(t_d)
 icrho = nProp #Index in walker where the density autocorrelation function C_rhorho(t_d) starts
 
-#number of wave vectors
-nMomenta = 10 #Number of momenta used to calculate C_rhorho(t_d)
+nMomenta = int(p9) #Number of momenta wave vectos used to calculate C_rhorho(t_d)
 
 qMomenta = np.empty(nMomenta) #Array of the momenta 
 for i in range(nMomenta):
