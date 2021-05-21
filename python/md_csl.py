@@ -1,375 +1,614 @@
+#immediate things to do:
+#1. finish statistics
+#2. add S(q,w)
+#4. add tail corrections X
+#5. Add final configuration X
+#6. add a simple user interface function
+#7. clean up, make tidy
+#8. add lots of comments
+#9. go through a second time to check I understand everything
+#10. add linked cells
+#11. Fix issues with PBCs
+
 import numpy as np
 import cmath
 import matplotlib.pyplot as plt
+import seaborn as sns
 from mpl_toolkits.mplot3d import Axes3D
-import random 
+import random
 import os
 import subprocess as sub
-import time
-from numba import jit, njit, cuda
 sub.call("rm -rf *.dat",shell=True)
 
-#simulation parameters organized my use or type:
-#**************************************************************
-#The user will create different physical scenarios with these.
-#macostate:
-N=20000 #number of particles
-rho=0.8 #density
-E=-3.00 #total energy per particle
-#time parameters:
-nblk=5
-nstep=10
-dt=0.001
-#**************************************************************
-#probably most of this stuff can be put into initiaization function
-#The user does not need to touch these parameters ordinarily.
-#boundary conditions:
-vol=N/rho
-L=vol**(1/3)
+#***************************************************************************************************************************************
+#These variables can be changed by the user to do different simulates for different possible realizations of the canonical ensemble. 
+#***************************************************************************************************************************************
 
-#chemical/physical:
-epsilon=1.0
-sigma=1.0
-#approximations
-rcut=2.5*sigma
-vcut=4.0*epsilon*((sigma/rcut)**12-(sigma/rcut)**6)
-#observables:
-n_obs=4 #Number of properties of the "walker"
-iv = 0 #Potential energy index
-iw = 1 #Virial index
-it = 2 #kinetic energy index 
-ie = 3 #Total energy index
-n_props=n_obs
-#for g(r)
-igofr = n_props
-nbins = 1
-n_props = n_props + nbins
-bin_size = (L/2.0)/nbins
-#for C_v(t_d)
-i_cv = n_props
-t_delay=10
-n_props = n_props + t_delay
-#for C_pq(t_d)
-#is there any reason why there would be two different delay times
-i_pq=n_props
-nq=10 #number of wave vectors
-#can ask user to write file containing components of the q's 
-#This is our first simple version for defining q along a single axis in q space
-qvec=np.empty(nq)
-for i in range(nq):
-  qvec[i]=i*2*np.pi/L
+#ENSEMBLE PARAMETERS: The user can simulate different macrostates by choosing different values for the parameters of the
+#microcanonical ensemble (N,V,E).
 
-n_props = n_props + t_delay*nq
-blk_norm=0.0
+nPart = 108 #The number of particles, N.
+rho = 0.8 #The density. This is related to the volume V.
+eTot = -5.73 #The total energy per particle. This is related to the total energy E.
 
-walker=np.zeros(n_props)
-blk_av=np.zeros(n_props)
-exp_av=np.zeros(n_props)
-std2=np.zeros(n_props)
+#TIME PARAMETERS: These control the quality of the simulation evolution and the quality of the statistics.
 
-#**************************************************************
-#setup initial conditions
+nBlock = 10 #Number of blocks. This controls number of measurements that are used to calculate the statistics for the oberservables.
+nStep =  10 #Number of time steps in a block. The simulated system changes its microstate from one time step to another.
+dt = 0.001  #Time step length. This is the approximation to the time differential. It is small but necessarily finite, 
+            #because the computer does "know" calculus, and can only do basic arthimetic.
+
+#***************************************************************************************************************************************
+
+#BOUNDARY CONDITIONS: These are related to the overal geometry and size of the system.
+
+Vol = nPart/rho   #The system's volume. This is computed from the number of particles and the denisty.
+lBox = Vol**(1/3) #The side length of the system. We assume the volume is a cube and compute the length of cube's edges from the volume.
+
+#CHEMICAL PARAMETERS: These are related to the properties of the Lennard-Jones potential (LJV) energy function which determines 
+#the interaction between different atoms.
+
+epsilon = 1.0 #Is the minimum value of the LJP.
+sigma = 1.0   #When r = sigma, the value of the LJP is zero. Sigma is also proportional to the minima of the potential.
+
+#APPROXIMATIONS: Because the LJV drops off quickly with distance, we introduce a cut off distance beyond which the potential is 
+#zero. Thus, the potential we actually use in the simulation is not the LJV, but rather a cut and shifted version of the LJV.
+
+rCut = 2.5*sigma #The cut off distance. We write it as a multiple of the zero-value distance sigma.
+vCut = 4.0*epsilon*((sigma/rCut)**12 - (sigma/rCut)**6) #The value of the potential evaluated at the cut off distance.
+vShift = 0.0 #????This is issue we need to address, how do we not have to define as global inside functions????
+
+#TAIL CORRECTIONS: These are variables are introduced to correct for errors introduced by the cut and shifted LJV. There are 
+#theoretical arguments that justify the form of these expressions.
+
+vTail = (8.0*np.pi*rho)/(9.0*pow(rCut,9)) - (8.0*np.pi*rho)/(3.0*pow(rCut,3)) #Related to the corrections to the potential energy
+pTail = (32.0*np.pi*rho)/(9.0*pow(rCut,9)) - (16.0*np.pi*rho)/(3.0*pow(rCut,3)) #Related to corrections to the pressure
+
+#STATIC OBSERVABLES: These variables are related to observables that do not change with time. Some are single numbers such as 
+#pressure because the pressure of a system in equilibrium is a single number not a scalar field. Others such as g(r) are 
+#functions of position. 
+
+nOb = 4 #Number of indices reserved in the "walker" array for single number observables
+iv = 0  #Potential energy index in walker 
+iw = 1  #Virial index in walker
+it = 2  #Kinetic energy index in walker
+ie = 3  #Total energy index in walker
+nProp = nOb #We keep updating the value of this variable as we add new function observables
+
+
+igofr = nProp #Index in walker where the radial distribution function g(r) starts
+nBin = 10 #Number of values g(r) is measured for
+nProp = nProp + nBin #We keep updating the value of this variable as we add new function observables
+sizeBin = (lBox/2.0)/nBin #The width in r of the bins used to compute g(r)
+
+#DYNAMICAL OBSERVABLES: Observables that change as a function of time.
+
+#for C_vv(t_d)
+icvel = nProp #Index in walker where the velocity autocorrelation function C_vv(t_d) starts
+nTdelay = 10 #Number of values C_vv(t_d) is measured for
+nProp = nProp + nTdelay #We keep updating the value of this variable as we add new function observables
+
+#for C_rhorho(t_d)
+icrho = nProp #Index in walker where the density autocorrelation function C_rhorho(t_d) starts
+
+#number of wave vectors
+nMomenta = 10 #Number of momenta used to calculate C_rhorho(t_d)
+
+qMomenta = np.empty(nMomenta) #Array of the momenta 
+for i in range(nMomenta):
+  qMomenta[i] = i*2*np.pi/lBox
+
+#We need to define these, but for a fluid, which is isotropic, all the momenta we use point in the same direction, but have 
+#different magnitudes. This is our first simple version for defining q along a single axis in q space.
+
+nProp = nProp + nTdelay*nMomenta #We keep updating the value of this variable as we add new function observables
+
+#OBSERVABLES' STATISTICS:
+
+blockNorm = 0.0 #The normalization factor that comes from the number of blocks
+walker = np.zeros(nProp) #Array of all single number observables and function observables
+blockAverage = np.zeros(nProp) #
+experimentAverage = np.zeros(nProp) #
+std2 = np.zeros(nProp) #
+
+
+#user interface 
+#makes code easier to use, run plotting and statistic from there
+#def interface():
+
+
+#***************************************************************************************************************************************
+
 def initialize():
-  #Global Variabless
-  global state
+  """
+  This function sets up the initial condition of the system. Given the number of particles provided by the user it tries its 
+  best to arrange them in a face centered cubic (FCC) lattice, which is the prefered lattice of a frozen noble gas. It 
+  assigns initial velocities to the particles using the energy provided by the user and the Maxwell-Boltzmann distribution.
+  """
 
-  #This part computes nced and the number of vacancies in the lattice
-  count=0
-  while count < N:
-    N_test=4*(count**3)
-    N_test_1=4*(count+1)**3
-    if N == N_test:
-      hole_flag=1
-      nced=count
-      N_hole=0
+  #Global Variables
+  global xPos,yPos,zPos,xVel,yVel,zVel,xVel0,yVel0,zVel0,qRho,qRho0
+
+  #This part computes nUperlbox and the number of holes in the lattice. nUperlbox is the number of unit cells that fit along 
+  #the edge of the PBC box of length lBox. 
+
+  #It works by finding out whether npart is an FCC magic number or not. By magic number, we mean that the entire FCC lattice
+  #(for a given number of unit FCC cells) is filled with no holes. If npart is not a magic number, this section of code 
+  #determines how many holes in the FCC lattice there are.
+ 
+  count = 0
+  while count < nPart:       
+    nTest = 4*(count**3)     #a magic number
+    nTest1 = 4*(count+1)**3  #next highest magic number
+    if nPart == nTest:       #checks if nPart is magic number
+      holeFlag = 1           #flag if not a magic number
+      nUperlbox = count      #number of unit cells needed to fit along edge of pbc cell
+      nHole = 0              #no holes
       break
-    elif (N_test<N) and (N<N_test_1):
-      hole_flag=2
-      nced=count+1
-      N_hole=N_test_1-N
-    count+=1
+    elif (nTest<nPart) and (nPart<nTest1):  #loop until we find two magic numbers that such that nTest < nPart < nTest1
+      holeFlag = 2           #flag if a magic number 
+      nUperlbox = count + 1  #number of unit cells needed to fit along edge of pbc cell
+      nHole = nTest1 - nPart #number of holes
+    count += 1
 
 
-  #microstate:
-  size1=N+N_hole
-  state = np.zeros((size1, 2, 3))
   
+  nObject = nPart + nHole    #number of particles plus number of holes
+  #arrays of particle position components
+  xPos = np.zeros(nObject)
+  yPos = np.zeros(nObject)  
+  zPos = np.zeros(nObject)
+  #arrays of particle velocity components
+  xVel = np.zeros(nPart)
+  yVel = np.zeros(nPart)
+  zVel = np.zeros(nPart)
+  #v(t0) array for dynamical measurements
+  xVel0 = np.zeros(nPart)  
+  yVel0 = np.zeros(nPart)
+  zVel0 = np.zeros(nPart)
+  #qRho(t) and qRho0(t) arrays for dynamical measurements
+  qRho = np.empty(nMomenta,dtype=np.complex_)
+  qRho0 = np.empty(nMomenta,dtype=np.complex_)
 
 
   #initial positions
-  #array of positions of 4 particles associated with front,lower,left
-  #corner of FCC unit cell 
-  qfcc=np.zeros((4,3))
-  dimc=L/nced   #sidelength of unit cell
-  ncells=nced**3 #number of unit cells in PBC box
+  #array of positions of 4 particles associated with front,lower,left corner of FCC unit cell 
+  fccCell = np.zeros((4,3)) #array for unit cell positions
+  lUcell = lBox/nUperlbox   #side length of unit cell
+  nUcell = nUperlbox**3     #number of unit cells in PBC box
+ 
+  #define unscaled positions for the 4 particle in the unit cell
+  fccCell[0][0] = 0.0
+  fccCell[0][1] = 0.0
+  fccCell[0][2] = 0.0
 
-  qfcc[0][0] = 0.0
-  qfcc[0][1] = 0.0
-  qfcc[0][2] = 0.0
+  fccCell[1][0] = 0.5
+  fccCell[1][1] = 0.5
+  fccCell[1][2] = 0.0
 
-  qfcc[1][0] = 0.5
-  qfcc[1][1] = 0.5
-  qfcc[1][2] = 0.0
+  fccCell[2][0] = 0.0
+  fccCell[2][1] = 0.5
+  fccCell[2][2] = 0.5
 
-  qfcc[2][0] = 0.0
-  qfcc[2][1] = 0.5
-  qfcc[2][2] = 0.5
+  fccCell[3][0] = 0.5
+  fccCell[3][1] = 0.0
+  fccCell[3][2] = 0.5
 
-  qfcc[3][0] = 0.5
-  qfcc[3][1] = 0.0
-  qfcc[3][2] = 0.5
-
-  #translate copies of positions in array to fill up entire PBC cell
-  #with FCC lattice points
-  k=0
-  for x_iter in range(nced):
-    rel_x = x_iter*dimc
-    for y_iter in range(nced):
-      rel_y = y_iter*dimc
-      for z_iter in range(nced):
-        rel_z = z_iter*dimc
+  #Translate copies of positions in array to fill up entire PBC cell with FCC lattice points
+  k = 0
+  for ix in range(nUperlbox):
+    for iy in range(nUperlbox):
+      for iz in range(nUperlbox):
         for j in range(4):
-          #perform the translation and place a particle there if
-          #we have still not used up all the particles
-          #changed N to N+N_hole, or else you will not start 
-          #with full lattice to subtract off from
-          #for no vacancies, N_hole==0
-          if k<(size1):
-            state[k][0][0] = rel_x + qfcc[j][0]*dimc
-            state[k][0][1] = rel_y + qfcc[j][1]*dimc
-            state[k][0][2] = rel_z + qfcc[j][2]*dimc
-            #make PBC centered at origin
-            state[k][0][0]+= - L*int(np.round(state[k][0][0]/L))
-            state[k][0][1]+= - L*int(np.round(state[k][0][0]/L))
-            state[k][0][2]+= - L*int(np.round(state[k][0][0]/L))
+          #Perform the translation and place a particle there if we have still not used up all the particles.
+          #Note that we are placing more nObject particles not nPart. We will get rid of the appropriate number
+          #of excess particles to get back down to nPart later.
+          if k<(nObject):
+            #Scale by lUcell the original unit cell positions and translate them along the various axes. Make PBC 
+            #cell centered at origin by tranlating every particle position component by lBox/2. Otherwise all the
+            #particle would be laid down in the first octant.
+            xPos[k] = (ix + fccCell[j][0])*lUcell - (lBox/2)
+            yPos[k] = (iy + fccCell[j][1])*lUcell - (lBox/2)
+            zPos[k] = (iz + fccCell[j][2])*lUcell - (lBox/2)
           k+=1
 
-  #This part handles case when N_hole != 0.
-  #We randomly delete N_hole many particles from full lattice
-  #where N+N_hole is the closest "magic number" larger than N
-  if hole_flag == 2:
-    rnd_index=random.sample(range(size1), N_hole)
-    state = np.delete(state, rnd_index, axis = 0)
-  #initial velocities
-  #calculate total potential energy from initial positions using LJV
-  # start = time.time()
-  vtot= np.zeros(1)
-  # for particle_i in range(N-1):
-  #   for particle_j in range(particle_i+1,N):
-  #     vtot = np.add(vtot,LJV(state,particle_i,particle_j))
-  # print("Outer loop ran in: " + str(time.time() - start))
-  
-  start = time.time()
-  vtot += LJV2(state)
-  print("Inner loop ran in: " + str(time.time() - start))
-  #this is a warning that something is unphysical because
-  #by definintion ekin>0.0, always
-  ekin=(E*N)-vtot
+  #This part handles the case when nHole != 0. We randomly select then delete nHole many particles from the full 
+  #lattice where nObject=nPart+nHole is the closest "magic number" larger than nPart.
+  if holeFlag == 2:
+    iRandhole = random.sample(range(nObject), nHole) #generate array of randomly selected indices we want to delete
+    xPos = np.delete(xPos, iRandhole) #get new arrays with only nPart many elements
+    yPos = np.delete(yPos, iRandhole)
+    zPos = np.delete(zPos, iRandhole)
+
+  #This part initializes the  velocities. We calculate total potential energy from initial positions using LJV
+  vtot = 0.0
+  for i in range(nPart-1):
+    for j in range(i+1,nPart):
+      vpair = LJV(xPos,yPos,zPos,i,j)
+      vtot = vtot + vpair
+
+  #This is a warning that something is unphysical because by definition ekin>0.0, always.
+  ekin = (eTot*nPart) - vtot
   if ekin<0.0:
     print("WARNING: Unphysical initial configuration.")
-  
-  #use thermodynamics formula <K>=3T/2 to calculate temperature
-  T=(2.0/3.0)*(ekin/N)
 
-  #boost reference frame to center of mass frame of particle cloud
-  vnet=np.zeros(3)
-  for i in range(N):
+  #Use equipartition of energy for system of particles with no internal degrees of freedom, which imples K_total=3TN/2,
+  #to calculate temperature.
+  T = (2.0/3.0)*(ekin/nPart)
+
+  #Boost reference frame to center of mass frame of particle cloud. This stops the particles from having an average 
+  #velocity. 
+  netVel = np.zeros(3)
+  for i in range(nPart):
     #uniform random velocities (adjusted later)
-    state[i][1]=np.random.uniform(low=-0.5, high=0.5,size= 3)
-
+    xVel[i] = np.random.uniform() - 0.5
+    yVel[i] = np.random.uniform() - 0.5
+    zVel[i] = np.random.uniform() - 0.5
     #net velocity components
-    vnet = np.add(vnet, state[i][1])
-    #vnet[0]=vnet[0]+vx[i]
+    netVel[0] += xVel[i]
+    netVel[1] += yVel[i]
+    netVel[2] += zVel[i]
 
-  
   #components of net velocity per particle
-  vnet = np.divide(vnet,N)
-  #vnet[0]=vnet[0]/N
+  netVel[0] /= nPart
+  netVel[1] /= nPart
+  netVel[2] /= nPart
 
   #subtract off net velocity of cloud from velocity of each particle
-  for i in range(N):
-    state[i][1] = np.subtract(state[i][1], vnet)
-    #vx[i]=vx[i]-vnet[0]
+  for i in range(nPart):
+    xVel[i] -= netVel[0]
+    yVel[i] -= netVel[1]
+    zVel[i] -= netVel[2]
 
   #calculate velocities using the thermo formula
-  sumv2= np.zeros(3)
-  for i in range(N):
-    sumv2 = np.add(sumv2, np.sum(np.square(state[i][1])))
-  sumv2 = np.divide(np.sum(sumv2), N)
-  
-  fs = (3*T/sumv2)**0.5
-  #rescale velocities so that they satisfy the thermo formula
-  for i in range(N):
-    state[i][1] = np.multiply(state[i][1], fs)
-    #vx[i] *= fs
+  sumVelsqrd = 0.0
+  for i in range(nPart):
+    sumVelsqrd += xVel[i]**2 + yVel[i]**2 + zVel[i]**2
+  sumVelsqrd /= nPart
 
-  print("(N,V,E) = ", N," ", vol," ", E)
-  print("PBC cell side length: L = ", L)
+  #rescale velocities so that they satisfy the thermo formula
+  scaleVel = (3*T/sumVelsqrd)**0.5
+  for i in range(nPart):
+    xVel[i] *= scaleVel
+    yVel[i] *= scaleVel
+    zVel[i] *= scaleVel
+
+  print("(N,V,E) = ", nPart," ", Vol," ", eTot)
+  print("PBC cell side length: L = ", lBox)
   print("Total potential energy: epot = ", vtot)
-  print("Total energy: E = ", E)
+  print("Total energy: E = ", eTot)
   print("Temperature: T = ", T)
 
-#**************************************************************
-#potential energy for a pair of particles function
-#LJV(particles x positions, particles y positions, particles z positions, 1st particle index, 2nd particle index)
-def LJV(state, particle_i,particle_j):
-  temp_pos = state[particle_i][0] - state[particle_j][0]
-  # dx0=q1[idi]-q1[idj]
-  temp_pos = np.subtract(temp_pos, np.multiply(np.round(np.divide(temp_pos, L)), L))
-  #dx0=dx0 - L*int(round(dx0/L))
-  dr = np.sqrt(np.sum(np.square(temp_pos)))
-  #dr=dx0**2+dy0**2+dz0**2
-  #dr=dr**0.5
-  v=4.0*epsilon*((sigma/dr)**12-(sigma/dr)**6)
-  if dr>=rcut:
-    v=0.0
-  if dr<rcut:
-    v=v-vcut
+#***************************************************************************************************************************************
+
+#Interparticle distance function 
+def partdist(xPart, yPart, zPart, iPart, jPart):
+  """
+  Calculates the distance between two particles. xPart, yPart, zPart are arrays of particle positions. iPart, jPart are the indices of
+  the particles in the pair.
+  """
+
+  xSep =  xPart[iPart] - xPart[jPart]
+  xSep -= lBox*(int(round(xSep/lBox)))
+  ySep =  yPart[iPart] - yPart[jPart]
+  ySep -= lBox*(int(round(ySep/lBox)))
+  zSep =  zPart[iPart] - zPart[jPart]
+  zSep -= lBox*(int(round(zSep/lBox)))
+  rSep =  (xSep**2 + ySep**2 + zSep**2)**0.5
+  return rSep
+
+#***************************************************************************************************************************************
+
+def LJV(xPart1, yPart1, zPart1, iPart1, jPart1):
+  """
+  Calculates the potential energy of a pair of particles as a function of the separation distance. xPart, yPart, zPart are arrays of
+  particle positions. iPart, jPart are the indices of the particles in the pair.
+  """
+  
+  rSep1 = partdist(xPart1, yPart1, zPart1, iPart1, jPart1)
+  v = 4.0*epsilon*((sigma/rSep1)**12 - (sigma/rSep1)**6)
+  if rSep1>=rCut:
+    v = 0.0
+  if rSep1<rCut:
+    v = v - vCut
   return v
-@jit(nopython=True)
-def LJV2(state):
-  vtot= np.zeros(1)
-  for particle_i in range(N-1):
-    for particle_j in range(particle_i+1,N):
-        temp_pos = state[particle_i][0] - state[particle_j][0]
-        # dx0=q1[idi]-q1[idj]
-        x = np.divide(temp_pos, L)
-        x = np.round(x[0])
-        temp_pos = np.subtract(temp_pos, np.multiply(x, L))
-        #dx0=dx0 - L*int(round(dx0/L))
-        dr = np.sqrt(np.sum(np.square(temp_pos)))
-        #dr=dx0**2+dy0**2+dz0**2
-        #dr=dr**0.5
-        v=4.0*epsilon*((sigma/dr)**12-(sigma/dr)**6)
-        if dr>=rcut:
-          v=0.0
-        if dr<rcut:
-          v=v-vcut
-        vtot = np.add(vtot, v)
-  return vtot
-#**************************************************************
+
+#***************************************************************************************************************************************
+
 #velocity Verlet move function
 def move():
-  f0x=np.zeros(N)
-  f0y=np.zeros(N)
-  f0z=np.zeros(N)
+  """
+  Performs the velocity Verlet algorithm.
+  """
+
+  #trial step components of all the forces of all the particles
+  xForce0 = np.zeros(nPart)
+  yForce0 = np.zeros(nPart)
+  zForce0 = np.zeros(nPart)
   
-  fx=np.zeros(N)
-  fy=np.zeros(N)
-  fz=np.zeros(N)
+  #components of all the forces of all the particles
+  xForce = np.zeros(nPart)
+  yForce = np.zeros(nPart)
+  zForce = np.zeros(nPart)
 
-  for i in range(N):
-    f0x[i]=force(i,0)
-    f0y[i]=force(i,1)
-    f0z[i]=force(i,2)
-
-  for i in range(N):
-    x[i]=x[i]+vx[i]*dt+0.5*f0x[i]*(dt**2)
-    y[i]=y[i]+vy[i]*dt+0.5*f0y[i]*(dt**2)
-    z[i]=z[i]+vz[i]*dt+0.5*f0z[i]*(dt**2)
-
-  for i in range(N):
-    fx[i]=force(i,0)
-    fy[i]=force(i,1)
-    fz[i]=force(i,2)
-
-  for i in range(N):
-    vx[i]=vx[i]+0.5*(fx[i]+f0x[i])*dt
-    vy[i]=vy[i]+0.5*(fy[i]+f0y[i])*dt
-    vz[i]=vz[i]+0.5*(fz[i]+f0z[i])*dt
+  for i in range(nPart):
+    xForce0[i] = force(i,0)
+    yForce0[i] = force(i,1)
+    zForce0[i] = force(i,2)
   
-  for i in range(N):
-    x[i]+= - L*int(round(x[i]/L))
-    y[i]+= - L*int(round(y[i]/L))
-    z[i]+= - L*int(round(z[i]/L))
+  #velocity verlet position formula
+  for i in range(nPart):
+    xPos[i] += xVel[i]*dt + 0.5*xForce0[i]*(dt**2)
+    yPos[i] += yVel[i]*dt + 0.5*yForce0[i]*(dt**2)
+    zPos[i] += zVel[i]*dt + 0.5*zForce0[i]*(dt**2)
 
-#**************************************************************
-#force function
-def force(idi, idim):
-  fdim=0.0
-  rsep=np.zeros(3)
-  for idj in range(N):
-    if idi!=idj:
-      rsep[0]=x[idi]-x[idj]
-      rsep[0]+= -L*int(round(rsep[0]/L))
-      rsep[1]=y[idi]-y[idj]
-      rsep[1]+= -L*int(round(rsep[1]/L))
-      rsep[2]=z[idi]-z[idj]
-      rsep[2]+= -L*int(round(rsep[2]/L))
-      dr=rsep[0]**2+rsep[1]**2+rsep[2]**2
-      dr=dr**0.5
-      if dr<rcut:
-        c=epsilon*(48.0*(sigma**12/dr**14) - 24.0*(sigma**6/dr**8))     
-        fdim+=c*rsep[idim]
-  return fdim
-      
-#**************************************************************
-#measures observables
+  for i in range(nPart):
+    xForce[i] = force(i,0)
+    yForce[i] = force(i,1)
+    zForce[i] = force(i,2)
+  
+  #velocity verlet velocity formula
+  for i in range(nPart):
+    xVel[i] += 0.5*(xForce[i] + xForce0[i])*dt
+    yVel[i] += 0.5*(yForce[i] + yForce0[i])*dt
+    zVel[i] += 0.5*(zForce[i] + zForce0[i])*dt
+  
+  #keep particles in PBC cell
+  for i in range(nPart):
+    xPos[i] += -lBox*(int(round(xPos[i]/lBox)))
+    yPos[i] += -lBox*(int(round(yPos[i]/lBox)))
+    zPos[i] += -lBox*(int(round(zPos[i]/lBox)))
+
+#***************************************************************************************************************************************
+
+def force(iPart, iComp):
+  """
+  Computes the force. We derived the formula for the force from the formula for the LJV. 
+  """
+
+  compForce = 0.0
+  rSep = np.zeros(3)
+  for jPart in range(nPart):
+    if iPart != jPart:
+      dr = partdist(xPos, yPos, zPos, iPart, jPart)
+      if dr < rCut:
+        magForce = epsilon*(48.0*(sigma**12/dr**14) - 24.0*(sigma**6/dr**8))
+        compForce += magForce*rSep[iComp]
+  return compForce
+
+#***************************************************************************************************************************************
+def instant_pos_vel():
+  """
+  Stores the intantaneous positions and velocities.
+  """
+  pos=open("positions.dat",'a')
+  vel=open("velocities.dat",'a')
+
+  for i in range(nPart):
+    pos.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(xPos[i],yPos[i],zPos[i]))
+    vel.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(xVel[i],yVel[i],zVel[i]))
+
+  pos.close()
+  vel.close()
+
+#***************************************************************************************************************************************
+
 def measure():
+  """
+  Measures the static observables. In this case we are measuring the numbers: the potential energy, the kinetic energy, and the virial.
+  We are also measuring the functions: the radial distribution function g(r). We also measure the instantaneous positions and velocities,
+  these should probably be handled by the dynamical measurements function.
+  """  
+  
   v = 0.0
   w = 0.0
   t = 0.0
-  #reset the hystogram of g(r)
-  for i in range(igofr, igofr+nbins):
+  global vShift
+
+  #reset the histogram of g(r)
+  for i in range(igofr, igofr+nBin):
     walker[i]=0.0
-  for i in range(N-1):
-    for j in range(i+1,N):
-      dx = x[i] - x[j]
-      dx += -L*int(round(dx/L))
-      dy = y[i] - y[j]
-      dy += -L*int(round(dy/L))
-      dz = z[i] - z[j]
-      dz += -L*int(round(dz/L))
-      dr = dx**2 + dy**2 + dz**2
-      dr = dr**0.5
+
+  for i in range(nPart-1):
+    for j in range(i+1,nPart):
+      dr = partdist(xPos, yPos, zPos, i, j)
 
       #g(r)
-      bin = igofr + int(dr/bin_size)
-      if bin < (igofr + nbins):
-        walker[bin] += 2.0
-     
-      if dr < rcut:
-        vij = 4.0*epsilon*((sigma/dr)**12-(sigma/dr)**6) - vcut 
+      ibin = igofr + int(dr/sizeBin)
+      if ibin<(igofr + nBin):
+        walker[ibin] += 2.0
+
+      if dr<rCut:
+        vij = 4.0*epsilon*((sigma/dr)**12 - (sigma/dr)**6) - vCut
         wij = 1.0*((sigma/dr)**12) - 0.5*((sigma/dr)**6)
 
         #Potential energy
         v += vij
         #Virial 
         w += wij
-        #vshift += vcut
+        #Shifted potential
+        vShift += vCut
 
   #Kinetic energy
-  for i in range(N):
-    t += 0.5*(vx[i]**2 + vy[i]**2 + vz[i]**2)
- 
+  for i in range(nPart):
+    t += 0.5*(xVel[i]**2 + yVel[i]**2 + zVel[i]**2)
+
   walker[iv] = v
   walker[iw] = 48.0*w/3.0
   walker[it] = t
   walker[ie] = walker[iv] + walker[it]
 
-  #instantaneous positions and velocities
-  pos=open("positions.dat",'a')
-  vel=open("velocities.dat",'a')
-  
-  for i in range(N):
-    pos.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(x[i],y[i],z[i]))
-    vel.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(vx[i],vy[i],vz[i]))
-  
-  pos.close()
-  vel.close()
+#***************************************************************************************************************************************
+#dynamical measurements
+#Within each step we keep the system moving over a time nTdelay and 
+#compute a dynamical variable, the VACF. Because the static observables
+#are computed with ensemble averages (actually time averages that can 
+#be taken as ensemble averages because the system is ergodic) we do 
+#not need to do this and the procedure is less complicated. I think.
+def measure_dyn(m):
+  #velocity autocorrelation
+  im = icvel + m   #run through all the indices in walker reserved for vvac, starting with icvel, tdelay many to run through
+  if m==0:
+    for i in range(nPart):
+      xVel0[i] = xVel[i]
+      yVel0[i] = yVel[i]
+      zVel0[i] = zVel[i]
 
-#**************************************************************
+  walker[im]=0.0
+  for k in range(nPart):
+    walker[im] += xVel[k]*xVel0[k] + yVel[k]*yVel0[k] + zVel[k]*zVel0[k]
+  walker[im] = walker[im]/nPart
+
+  #dynamical density correlation
+  if m==0:
+    for i in range(nMomenta):
+      qRho0[i] = complex(0,0)
+      for j in range(nPart):
+      #negative in exp is gone because it cancels with negative q in definition of qRho(t)
+        qRho0[i] += cmath.exp(complex(0,qMomenta[i]*xPos[j]))
+
+
+  for i in range(nMomenta):
+    qRho[i] = complex(0,0)
+    for j in range(nPart):
+      qRho[i] += cmath.exp(complex(0,-qMomenta[i]*xPos[j]))
+
+
+ #print("Debug pMomenta0 pMomenta ",pMomenta0[0], pMomenta[0], qMomenta[0])
+
+  for k in range(nMomenta):
+    im = icrho + k + m*nMomenta
+    walker[im] = 0.0
+
+  for k in range(nMomenta):
+    im = icrho + k + m*nMomenta
+    corr = qRho[k]*qRho0[k]
+    walker[im] += corr.real
+    walker[im] = walker[im]/nPart
+   #if(k==0):
+   #  print("Debug m ",m)
+   #  print("Debug im ",im)
+   #  print("Debug corr ",corr.real/N)
+   #  print("Debug walker ",walker[im])
+
+
+  #dynamical structure factor
+  #make later
+
+#***************************************************************************************************************************************
+
+#computes averages
+#need to change to averages and standard devs from different blocks
+#recall the blockNorm is the same as nStep
+#I do not know if the stdev is the same for every value of blockAverage
+#printed to file or whether it would be different
+#I think it should be the same because each block is an experiments
+#and the standard deviation comes from many experiments
+def average(iwhat):
+  wd = 12
+  global blockNorm,blockAverage,experimentAverage,walker
+  
+  #Reset block averages
+  if iwhat == 1:
+    blockAverage = np.zeros(nProp)
+    experimentAverage = np.zeros(nProp)
+    blockNorm = 0.0
+
+  #Update block averages
+  elif iwhat == 2:
+    for i in range(nProp):
+      blockAverage[i] = blockAverage[i] + walker[i]
+    blockNorm = blockNorm + 1.0
+
+  #Print results for current block
+  elif iwhat == 3:
+    print("Block number: ", iblk)
+
+    Epot=open('epotential.dat','a')
+    Pres=open("pressure.dat",'a')
+    Ekin=open("ekinetic.dat",'a')
+    Temp=open("temperature.dat",'a')
+    Etot=open("etotal.dat",'a')
+    Gofr=open("gofr.dat",'a')
+    Vacf=open("vacf.dat",'a')
+    Ddcf=open("ddcf.dat",'a')
+
+    #Average potential energy per particle
+    Epot.write("{:f}\t\t\t{:f}\n".format(blockAverage[iv]/blockNorm/nPart,blockNorm))
+    #Average pressure per particle
+    Pres.write("{:f}\t\t\t{:f}\n".format(rho*(2.0/3.0)*blockAverage[it]/blockNorm/nPart+((blockAverage[iw]/blockNorm)/Vol),blockNorm))
+    #Average kinetic energy per particle
+    Ekin.write("{:f}\t\t\t{:f}\n".format(blockAverage[it]/blockNorm/nPart,blockNorm))
+    #Average temperature per particle
+    Temp.write("{:f}\t\t\t{:f}\n".format((2.0/3.0)*blockAverage[it]/blockNorm/nPart,blockNorm))
+    #Average total energy per particle
+    Etot.write("{:f}\t\t\t{:f}\n".format(blockAverage[ie]/blockNorm/nPart,blockNorm))
+
+    #g(r)
+    for k in range(igofr,igofr+nBin):
+      sd = 4.0*np.pi/3.0
+      kk = k - igofr
+      r = kk * sizeBin
+      gdir = blockAverage[k]/blockNorm
+      gdir *= 1.0/(sd*((r + sizeBin)**3 - (r**3))*rho*nPart)
+      Gofr.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(gdir,blockNorm,r))
+
+    for l in range(icvel,icvel+nTdelay):
+      t = (l-icvel)*dt
+      Vacf.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(blockAverage[l]/blockNorm,blockNorm,t))
+
+    for j in range(icrho,icrho+nTdelay*nMomenta):
+      t = int((j-icrho)/nMomenta)*dt
+      q = (j - icrho)%nMomenta
+      Ddcf.write("{:f}\t\t\t{:f}\t\t\t{:f}\t\t\t{:f}\n".format(blockAverage[j]/blockNorm,blockNorm,t,qMomenta[q]))
+
+    Epot.close()
+    Pres.close()
+    Ekin.close()
+    Temp.close()
+    Etot.close()
+    Gofr.close()
+    Vacf.close()
+    Ddcf.close()
+
+    print("----------------------------")
+
+#***************************************************************************************************************************************
+#gets final configuration of system
+def config_final():
+  """
+  Stores the final particle conditions. Corrects for tail corrections.
+  """
+  
+  global vShift
+  print("Print final configuration to file config.final \n\n")
+
+  conf=open("config_final.dat",'a')
+  for i in range(nPart):
+    conf.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(xPos[i]/lBox,yPos[i]/lBox,zPos[i]/lBox))
+  conf.close()
+
+  print("Information for recovering the full LJ potential properties \n")
+  vShift /= float(nStep*nBlock*nPart)
+  print("Add to the potential and to the total energy the correction term ", vShift + vTail)
+  print("Add to the pressure the correction term ", rho*pTail)
+ 
+  #need to write some stuff about storing a new seed
+
+#***************************************************************************************************************************************
 #main
 #interface()
 initialize()
-for iblk in range(nblk):
+for iblk in range(nBlock):
   average(1)
-  for t in range(nstep):
-    for m in range(t_delay):
+  for t in range(nStep):
+    for m in range(nTdelay):
       measure_dyn(m)
       move()
     measure()
+    #instant_pos_vel()
     average(2)
     print("t = ",t)
   average(3)
-#**************************************************************
+config_final()
+#***************************************************************************************************************************************
