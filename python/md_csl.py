@@ -1,3 +1,4 @@
+# Copyright 2021 Patrick Kelly
 #immediate things to do:
 #1. finish statistics
 #2. add S(q,w)
