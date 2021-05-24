@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-=======
-*****************************************************************
 Use this file to control the microcanonical ensemble parameters,
 time parameters, and measurement parameters for a simulation of
 the Lennard-Jones, classical simple liquid. The numbers mean the
@@ -20,15 +17,3 @@ Measurement parameters:
 7. Number of values g(r) is measured for.
 8. Number of values C_vv(t_d) is measured for.
 9. Number of momenta used to calculate C_rhorho(t_d).
-*****************************************************************
-
->>>>>>> master
-108
-0.8
--5.73
-10
-10
-0.001
-10
-10
-10
