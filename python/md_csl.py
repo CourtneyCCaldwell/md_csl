@@ -25,7 +25,11 @@ sub.call("rm -rf *.dat",shell=True)
 #***************************************************************************************************************************************
 
 #load from simulation parameters file sim_params.in
+<<<<<<< HEAD
 p1, p2, p3, p4, p5, p6, p7, p8, p9 = np.loadtxt("sim_params.in", unpack=True)
+=======
+p1, p2, p3, p4, p5, p6, p7, p8, p9 = np.loadtxt("sim_params.in", unpack=True, skiprows=22)
+>>>>>>> master
 
 #ENSEMBLE PARAMETERS: The user can simulate different macrostates by choosing different values for the parameters of the
 #microcanonical ensemble (N,V,E).
