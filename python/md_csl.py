@@ -7,6 +7,7 @@
 #6. add lots of comments
 #7. fix animation file
 #8. go through a second time to check I understand everything
+#9. ...
 
 import numpy as np
 import cmath
