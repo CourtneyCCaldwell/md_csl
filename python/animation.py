@@ -5,13 +5,15 @@ import matplotlib.patches as patches
 from mpl_toolkits.mplot3d import Axes3D
 import sys 
 
-N=int(sys.argv[1])
-L=float(sys.argv[2])
-
-#N=108
-#L=
+#size of particles in animation
+size = 100.0
 
 x,y,z=np.loadtxt("positions.dat",usecols=(0,1,2),unpack=True)
+anim_param  = np.loadtxt("sim_params.in", unpack=True)
+
+N = int(anim_param[0])
+rho = anim_param[1]
+L = (N/rho)**(1.0/3.0)
 
 nsteps=len(x)/N
 nsteps=int(nsteps)
@@ -27,12 +29,6 @@ for i in range(N):
      yti[i][t]=y[s]
      zti[i][t]=z[s]
 
-
-#print(x)
-
-#print(xti)
-
-
 fig = plt.figure()
 ax = Axes3D(fig)
 
@@ -46,13 +42,9 @@ def animate(t):
         xp=xti[i][t]
         yp=yti[i][t]
         zp=zti[i][t]
-        ax.scatter(xp,yp,zp)
-#        patch=patches.Circle((xp,yp), 0.01, color='blue')
-#        ax.add_patch(patch)
+        ax.scatter(xp,yp,zp,s=size)
 
 anim=animation.FuncAnimation(fig,animate,nsteps,interval=1, blit=False)
-
 plt.show()
-
-
-#anim.save('md_test_1.MP4', writer='imagemagick', fps=20)
+writergif = animation.PillowWriter(fps=10)
+anim.save('CSL_animation.gif', writer=writergif)

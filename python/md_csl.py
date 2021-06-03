@@ -1,22 +1,16 @@
-#immediate things to do:
-#1. finish statistics
-#2. add S(q,w)
-#4. add tail corrections X
-#5. Add final configuration X
-#6. add a simple user interface function
-#7. clean up, make tidy
-#8. add lots of comments
-#9. go through a second time to check I understand everything
-#10. add linked cells
-#11. Fix issues with PBCs
+#First draft to do list:
+#1. finish statistics file
+#2. add user friendly plotting file
+#3. add user friendly animation file
+#4. add calculation of standard errors 
+#5. clean up, make tidy
+#6. add lots of comments
+#7. fix animation file
+#8. go through a second time to check I understand everything
 
 import numpy as np
 import cmath
-import matplotlib.pyplot as plt
-import seaborn as sns
-from mpl_toolkits.mplot3d import Axes3D
 import random
-import os
 import subprocess as sub
 sub.call("rm -rf *.dat",shell=True)
 
@@ -24,8 +18,8 @@ sub.call("rm -rf *.dat",shell=True)
 #These variables can be changed by the user to do different simulates for different possible realizations of the canonical ensemble. 
 #***************************************************************************************************************************************
 
-#load from simulation parameters file sim_params.in
-p1, p2, p3, p4, p5, p6, p7, p8, p9 = np.loadtxt("sim_params.in", unpack=True)
+#load simulation parameters from file sim_params.in
+p1, p2, p3, p4, p5, p6, p7, p8, p9, p10 = np.loadtxt("sim_params.in", unpack=True)
 
 #ENSEMBLE PARAMETERS: The user can simulate different macrostates by choosing different values for the parameters of the
 #microcanonical ensemble (N,V,E).
@@ -33,10 +27,6 @@ p1, p2, p3, p4, p5, p6, p7, p8, p9 = np.loadtxt("sim_params.in", unpack=True)
 nPart = int(p1) #The number of particles, N.
 rho = p2 #The density. This is related to the volume V.
 eTot = p3 #The total energy per particle. This is related to the total energy E.
-
-#nPart = 108 #The number of particles, N.
-#rho = 0.8 #The density. This is related to the volume V.
-#eTot = -5.73 #The total energy per particle. This is related to the total energy E.
 
 #TIME PARAMETERS: These control the quality of the simulation evolution and the quality of the statistics.
 
@@ -100,14 +90,16 @@ icrho = nProp #Index in walker where the density autocorrelation function C_rhor
 
 nMomenta = int(p9) #Number of momenta wave vectos used to calculate C_rhorho(t_d)
 
-qMomenta = np.empty(nMomenta) #Array of the momenta 
+#Array of the momenta. We need to define these, but for a fluid, which is isotropic, all the momenta we use point in the same direction, but have 
+#different magnitudes. This is our first simple version for defining q along a single axis in q space.
+
+qMomenta = np.empty(nMomenta) 
 for i in range(nMomenta):
   qMomenta[i] = i*2*np.pi/lBox
 
-#We need to define these, but for a fluid, which is isotropic, all the momenta we use point in the same direction, but have 
-#different magnitudes. This is our first simple version for defining q along a single axis in q space.
-
 nProp = nProp + nTdelay*nMomenta #We keep updating the value of this variable as we add new function observables
+
+instFlag = p10 #flag that controls whether use want to save the instantaneous positions and velocities
 
 #OBSERVABLES' STATISTICS:
 
@@ -115,13 +107,7 @@ blockNorm = 0.0 #The normalization factor that comes from the number of blocks
 walker = np.zeros(nProp) #Array of all single number observables and function observables
 blockAverage = np.zeros(nProp) #
 experimentAverage = np.zeros(nProp) #
-std2 = np.zeros(nProp) #
-
-
-#user interface 
-#makes code easier to use, run plotting and statistic from there
-#def interface():
-
+#std2 = np.zeros(nProp) #
 
 #***************************************************************************************************************************************
 
@@ -157,8 +143,6 @@ def initialize():
       nHole = nTest1 - nPart #number of holes
     count += 1
 
-
-  
   nObject = nPart + nHole    #number of particles plus number of holes
   #arrays of particle position components
   xPos = np.zeros(nObject)
@@ -175,7 +159,6 @@ def initialize():
   #qRho(t) and qRho0(t) arrays for dynamical measurements
   qRho = np.empty(nMomenta,dtype=np.complex_)
   qRho0 = np.empty(nMomenta,dtype=np.complex_)
-
 
   #initial positions
   #array of positions of 4 particles associated with front,lower,left corner of FCC unit cell 
@@ -383,7 +366,7 @@ def force(iPart, iComp):
   return compForce
 
 #***************************************************************************************************************************************
-def instant_pos_vel():
+def measure_instant():
   """
   Stores the intantaneous positions and velocities.
   """
@@ -401,9 +384,8 @@ def instant_pos_vel():
 
 def measure():
   """
-  Measures the static observables. In this case we are measuring the numbers: the potential energy, the kinetic energy, and the virial.
-  We are also measuring the functions: the radial distribution function g(r). We also measure the instantaneous positions and velocities,
-  these should probably be handled by the dynamical measurements function.
+  Measures the static observables. We measure the numbers: the potential energy, the kinetic energy, and the virial. We measure the
+  function(s) of distance r: the radial distribution function g(r).
   """  
   
   v = 0.0
@@ -445,74 +427,81 @@ def measure():
   walker[ie] = walker[iv] + walker[it]
 
 #***************************************************************************************************************************************
-#dynamical measurements
-#Within each step we keep the system moving over a time nTdelay and 
-#compute a dynamical variable, the VACF. Because the static observables
-#are computed with ensemble averages (actually time averages that can 
-#be taken as ensemble averages because the system is ergodic) we do 
-#not need to do this and the procedure is less complicated. I think.
 def measure_dyn(m):
+  """
+  Measures the dynamical observables. We measure the function(s) of time: the velocity autocorrelation function (VACF). We measure the
+  function(s) of time and momentum: the spatial Fourier transform of the density autocorrelation function (F_r[DACF]). 
+  
+  To calculate the VACF we have at least two strategies available. Within each step t, of which there are nStep many, we keep the
+  system moving over a time nTdelay by including an additional nTdelay time steps and compute the
+  dynamical variables. We assume the system is ergodic, which implies we can replace ensemble averages with time averages. One
+  strategy we could do is to perform a time average for every individual particle to get the VACF, for example, for that particular
+  particle. To get even better results we could then average that over the number of particles. The time average is defined with an
+  integral, but we would approximate it with a sum. However, we could make another approximation and just perform the average over the
+  number of particles, for all time between 0 and nTdelay*dt. This is justified because the particle number average behaviour of some
+  quantity that depends on the motion of the particles serves as a stand in for the behavior of this quantity for a "typical"
+  particle. This is the strategy we use in the code. Its advantage is that it allows us to calculate the VVAC while the simulation is
+  running. In the previous strategy we would have to complete the simulation and perform the calculation on the data we had generated
+  after the simulation was complete.
+
+  To calculate the DACF, we employ the following strategy. First note that the DACF is a function of time and distance. We want to use the
+  DACF to get the dynamical structure factor (S(q,w)), which is a function of momentum and frequency. So instead of calculating the DACF
+  directly, we calculate its spacial Fourier transform, F_r[DACF].
+
+  To be continued...
+  
+  """  
+
   #velocity autocorrelation
-  im = icvel + m   #run through all the indices in walker reserved for vvac, starting with icvel, tdelay many to run through
-  if m==0:
+  im = icvel + m #run through all the indices in walker reserved for VACF, starting with icvel, with nTdelay many to run through
+  if m==0: #get the initial velocity we will which we correlate with later velocities
     for i in range(nPart):
       xVel0[i] = xVel[i]
       yVel0[i] = yVel[i]
       zVel0[i] = zVel[i]
 
-  walker[im]=0.0
-  for k in range(nPart):
-    walker[im] += xVel[k]*xVel0[k] + yVel[k]*yVel0[k] + zVel[k]*zVel0[k]
+  walker[im]=0.0 #initialize the section of walker reserved for the VACF
+  for i in range(nPart): #average over particle number
+    walker[im] += xVel[i]*xVel0[i] + yVel[i]*yVel0[i] + zVel[i]*zVel0[i]
   walker[im] = walker[im]/nPart
 
-  #dynamical density correlation
+  #spacial Fourier transform of density autocorrelation
   if m==0:
-    for i in range(nMomenta):
+    for i in range(nMomenta): 
       qRho0[i] = complex(0,0)
       for j in range(nPart):
-      #negative in exp is gone because it cancels with negative q in definition of qRho(t)
-        qRho0[i] += cmath.exp(complex(0,qMomenta[i]*xPos[j]))
-
+        qRho0[i] += cmath.exp(complex(0,qMomenta[i]*xPos[j])) #negative in exp is gone because it cancels with negative q in definition of qRho(t)
 
   for i in range(nMomenta):
     qRho[i] = complex(0,0)
     for j in range(nPart):
       qRho[i] += cmath.exp(complex(0,-qMomenta[i]*xPos[j]))
 
-
- #print("Debug pMomenta0 pMomenta ",pMomenta0[0], pMomenta[0], qMomenta[0])
-
-  for k in range(nMomenta):
-    im = icrho + k + m*nMomenta
+  for i in range(nMomenta):
+    im = icrho + i + m*nMomenta
     walker[im] = 0.0
 
-  for k in range(nMomenta):
-    im = icrho + k + m*nMomenta
-    corr = qRho[k]*qRho0[k]
+  for i in range(nMomenta):
+    im = icrho + i + m*nMomenta
+    corr = qRho[i]*qRho0[i]
     walker[im] += corr.real
     walker[im] = walker[im]/nPart
-   #if(k==0):
-   #  print("Debug m ",m)
-   #  print("Debug im ",im)
-   #  print("Debug corr ",corr.real/N)
-   #  print("Debug walker ",walker[im])
-
-
-  #dynamical structure factor
-  #make later
 
 #***************************************************************************************************************************************
+def average(iwhat, whichStep):
+  """
+  Computes averages. Each block is an approximately independent measurement, if nStep is large enough, of some observable that is a
+  function of the positions and velocities of the particles, like the average kinetic energy, or the virial, for example. Each run of
+  the simulation, is an experiment which is a set of measurements. We print the values averaged over a single block to a file, then the
+  file "statistics.py" handles the calculation of standard errors.
+  
+  ...
+  
+  remember blockNorm is the same as nStep
+  """
 
-#computes averages
-#need to change to averages and standard devs from different blocks
-#recall the blockNorm is the same as nStep
-#I do not know if the stdev is the same for every value of blockAverage
-#printed to file or whether it would be different
-#I think it should be the same because each block is an experiments
-#and the standard deviation comes from many experiments
-def average(iwhat):
   wd = 12
-  global blockNorm,blockAverage,experimentAverage,walker
+  global blockNorm, blockAverage, experimentAverage, walker
   
   #Reset block averages
   if iwhat == 1:
@@ -522,6 +511,7 @@ def average(iwhat):
 
   #Update block averages
   elif iwhat == 2:
+    print("Step number: ", whichStep)
     for i in range(nProp):
       blockAverage[i] = blockAverage[i] + walker[i]
     blockNorm = blockNorm + 1.0
@@ -530,7 +520,7 @@ def average(iwhat):
   elif iwhat == 3:
     print("Block number: ", iblk)
 
-    Epot=open('epotential.dat','a')
+    Epot=open("epotential.dat",'a')
     Pres=open("pressure.dat",'a')
     Ekin=open("ekinetic.dat",'a')
     Temp=open("temperature.dat",'a')
@@ -583,7 +573,7 @@ def average(iwhat):
 #gets final configuration of system
 def config_final():
   """
-  Stores the final particle conditions. Corrects for tail corrections.
+  Stores the final particle conditions. Adds tail corrections.
   """
   
   global vShift
@@ -594,27 +584,26 @@ def config_final():
     conf.write("{:f}\t\t\t{:f}\t\t\t{:f}\n".format(xPos[i]/lBox,yPos[i]/lBox,zPos[i]/lBox))
   conf.close()
 
-  print("Information for recovering the full LJ potential properties \n")
   vShift /= float(nStep*nBlock*nPart)
+  
+  print("Information for recovering the full LJ potential properties \n")
   print("Add to the potential and to the total energy the correction term ", vShift + vTail)
   print("Add to the pressure the correction term ", rho*pTail)
  
-  #need to write some stuff about storing a new seed
-
 #***************************************************************************************************************************************
 #main
 #interface()
 initialize()
 for iblk in range(nBlock):
-  average(1)
+  average(1,0)
   for t in range(nStep):
     for m in range(nTdelay):
       measure_dyn(m)
+      if (instFlag == 1):
+        measure_instant()
       move()
     measure()
-    #instant_pos_vel()
-    average(2)
-    print("t = ",t)
-  average(3)
+    average(2,t)
+  average(3,0)
 config_final()
 #***************************************************************************************************************************************
