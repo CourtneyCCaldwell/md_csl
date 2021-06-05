@@ -1,4 +1,3 @@
-#First draft to do list:
 #1. finish statistics file
 #2. add user friendly plotting file
 #3. add user friendly animation file
@@ -7,7 +6,6 @@
 #6. add lots of comments
 #7. fix animation file
 #8. go through a second time to check I understand everything
-#9. ...
 
 import numpy as np
 import cmath
@@ -19,8 +17,8 @@ sub.call("rm -rf *.dat",shell=True)
 #These variables can be changed by the user to do different simulates for different possible realizations of the canonical ensemble. 
 #***************************************************************************************************************************************
 
-#load simulation parameters from file sim_params.in
-p1, p2, p3, p4, p5, p6, p7, p8, p9, p10 = np.loadtxt("sim_params.in", unpack=True)
+#load from simulation parameters file sim_params.in
+p1, p2, p3, p4, p5, p6, p7, p8, p9, p10 = np.loadtxt("sim_params.in", usecols = 0,unpack=True)
 
 #ENSEMBLE PARAMETERS: The user can simulate different macrostates by choosing different values for the parameters of the
 #microcanonical ensemble (N,V,E).
@@ -108,7 +106,6 @@ blockNorm = 0.0 #The normalization factor that comes from the number of blocks
 walker = np.zeros(nProp) #Array of all single number observables and function observables
 blockAverage = np.zeros(nProp) #
 experimentAverage = np.zeros(nProp) #
-#std2 = np.zeros(nProp) #
 
 #***************************************************************************************************************************************
 
@@ -215,7 +212,7 @@ def initialize():
   for i in range(nPart-1):
     for j in range(i+1,nPart):
       vpair = LJV(xPos,yPos,zPos,i,j)
-      vtot = vtot + vpair
+      vtot += vpair
 
   #This is a warning that something is unphysical because by definition ekin>0.0, always.
   ekin = (eTot*nPart) - vtot
@@ -255,7 +252,7 @@ def initialize():
   for i in range(nPart):
     sumVelsqrd += xVel[i]**2 + yVel[i]**2 + zVel[i]**2
   sumVelsqrd /= nPart
-
+  
   #rescale velocities so that they satisfy the thermo formula
   scaleVel = (3*T/sumVelsqrd)**0.5
   for i in range(nPart):
@@ -277,7 +274,12 @@ def partdist(xPart, yPart, zPart, iPart, jPart):
   Calculates the distance between two particles. xPart, yPart, zPart are arrays of particle positions. iPart, jPart are the indices of
   the particles in the pair.
   """
+  #NaN bug appears to come from calculation of particle distance for the initial configuration, so that the initial potential energy
+  #can be calculated. But for some reason the initial potential energy gives a negative kinetic energy, even though in Dr. Vitali's
+  #code this choice for the microcanon. ensemble should work.
 
+  #the math problem is that the potential for the IC does not seem to be negative enough, need larger negative value
+  
   xSep =  xPart[iPart] - xPart[jPart]
   xSep -= lBox*(int(round(xSep/lBox)))
   ySep =  yPart[iPart] - yPart[jPart]
@@ -300,7 +302,7 @@ def LJV(xPart1, yPart1, zPart1, iPart1, jPart1):
   if rSep1>=rCut:
     v = 0.0
   if rSep1<rCut:
-    v = v - vCut
+    v -= vCut #v is cut and shifted potential
   return v
 
 #***************************************************************************************************************************************
@@ -345,9 +347,9 @@ def move():
   
   #keep particles in PBC cell
   for i in range(nPart):
-    xPos[i] += -lBox*(int(round(xPos[i]/lBox)))
-    yPos[i] += -lBox*(int(round(yPos[i]/lBox)))
-    zPos[i] += -lBox*(int(round(zPos[i]/lBox)))
+    xPos[i] -= lBox*(int(round(xPos[i]/lBox)))
+    yPos[i] -= lBox*(int(round(yPos[i]/lBox)))
+    zPos[i] -= lBox*(int(round(zPos[i]/lBox)))
 
 #***************************************************************************************************************************************
 
