@@ -17,3 +17,7 @@ Measurement parameters:
 7. Number of values g(r) is measured for.
 8. Number of values C_vv(t_d) is measured for.
 9. Number of momenta used to calculate C_rhorho(t_d).
+
+Flags:
+10. If flag set to 0, code does not store instantaneous positions and velocities.
+    If flag set to 1, code stores instantaneous positions and velocities. 
