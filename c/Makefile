@@ -1,5 +1,9 @@
+CC = gcc
+CFLAGS = -o
+OBJS =
+PRGRM = mdcsl
 mdcsl: main.c particle/particle.h
-	gcc -o mdcsl main.c
+	${CC} ${CFLAGS} ${PRGRM} main.c
 
 clean:
-	rm -f mdcsl
+	rm -f ${PRGRM} ${OBJS}
