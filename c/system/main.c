@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <math.h>
 
-#include "particle/particle.h"
+#include "../particle/particle.h"
 
 
 int main(int argc, char ** argv) {
