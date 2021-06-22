@@ -12,6 +12,6 @@ struct Particle {
   float vx; // velocity x-direction
   float vy; // velocity y-direction
   float vz; // velocity z-direction
-} particle;
+};
 
 #endif

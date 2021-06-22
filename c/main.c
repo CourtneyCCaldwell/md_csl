@@ -2,21 +2,11 @@
 #include <stdlib.h>
 #include <math.h>
 
-#include "particle.h"
-
-// MACROS
-// params
-#define N 20000
-#define rho 0.8
-#define E -3.00
-// time params
-#define nblk  5
-#define nstep  10
-#define dt 0.001
+#include "particle/particle.h"
 
 
-int main(void) {
-    struct Particle * X = malloc(sizeof(particle));
+int main(int argc, char ** argv) {
+    struct Particle * X = malloc(sizeof(struct Particle));
     X->x = 1;
     printf("%f\n", X->x);
     free(X);
